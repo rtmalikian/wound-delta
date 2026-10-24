@@ -1,0 +1,32 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      AI_BACKEND: ${AI_BACKEND:-stub}
+      LOCAL_MODEL_URL: ${LOCAL_MODEL_URL:-http://local-model:11434}
+      WOUND_DELTA_TIER: ${WOUND_DELTA_TIER:-frugal}
+    depends_on:
+      local-model:
+        condition: service_started
+        required: false
+
+  # Optional: a local vision-capable model server so wound photos never
+  # leave the home or clinic. Start with:
+  #   docker compose --profile local-model up
+  # Then pull a vision model inside it, e.g.:
+  #   docker compose exec local-model ollama pull llava:7b
+  # and set AI_BACKEND=local in .env
+  local-model:
+    image: ollama/ollama:latest
+    profiles: ["local-model"]
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  ollama-data:

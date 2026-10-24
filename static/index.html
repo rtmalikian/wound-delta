@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WoundDelta — is this wound better than last week?</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 880px; padding: 0 1rem; color: #1c2430; }
+  h1 { font-size: 1.7rem; margin-bottom: .2rem; }
+  .sub { color: #55606e; margin-top: 0; }
+  .card { border: 1px solid #d5dbe3; border-radius: 10px; padding: 1rem 1.2rem; margin: 1rem 0; }
+  .stage { position: relative; width: 320px; height: 320px; background: #f2eee9; border-radius: 8px; overflow: hidden; }
+  .stage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #ghostImg { opacity: .5; }
+  label { font-weight: 600; display: block; margin: .6rem 0 .2rem; }
+  button { background: #14666b; color: #fff; border: 0; border-radius: 6px; padding: .55rem 1rem; cursor: pointer; font-size: 1rem; }
+  button.secondary { background: #e8edf1; color: #1c2430; }
+  pre { background: #0f1722; color: #d7e3ee; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: .82rem; }
+  .flag { color: #a11; font-weight: 700; }
+  .ok { color: #17663a; font-weight: 700; }
+  .row { display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: flex-start; }
+</style>
+</head>
+<body>
+<h1>WoundDelta</h1>
+<p class="sub">Is this wound better than last week? Answered by subtraction, not diagnosis.
+The change is measured in code. A language model only phrases the numbers.</p>
+
+<div class="card">
+  <h2>1. Ghost overlay capture guide</h2>
+  <p>Pick the previous photo, then the new one. The previous photo sits at 50%
+  opacity over the new one: that ghost is the capture guide. In the clinic or
+  at home, line the wound up with its ghost before accepting the photo. Same
+  angle, same distance, same light.</p>
+  <div class="row">
+    <div>
+      <label>Previous photo <input type="file" id="prevFile" accept="image/*"></label>
+      <label>New photo <input type="file" id="newFile" accept="image/*"></label>
+      <label>Ghost opacity <input type="range" id="ghostRange" min="0" max="100" value="50"></label>
+      <label>Tier
+        <select id="tierSel">
+          <option value="frugal">Frugal (default, ≤300 tokens/pair)</option>
+          <option value="full">Full / commercial (high detail + verifier)</option>
+        </select>
+      </label>
+      <p><button id="compareBtn">Measure the change</button></p>
+    </div>
+    <div class="stage">
+      <img id="newImg" alt="New wound photo">
+      <img id="ghostImg" alt="Previous wound photo as ghost overlay">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2. Or try the synthetic demo</h2>
+  <p>These are the same generated fixtures the test suite measures against
+  known ground truth.</p>
+  <p>
+    <button class="secondary" data-demo="healing">Healing pair</button>
+    <button class="secondary" data-demo="stable">Stable pair</button>
+    <button class="secondary" data-demo="worse">Getting worse</button>
+  </p>
+</div>
+
+<div class="card" id="disclaimerCard" style="border-color:#c0392b;background:#fdf0ef">
+  <strong>⚠️ Proof of concept — not clinically tested.</strong>
+  This tool is for research and software demonstration only. It is not a
+  medical device, it does not diagnose, treat, or rule out any condition,
+  and its outputs may be wrong, including false positives and false
+  negatives. Do not use it to make decisions about your health. For any
+  medical issue, seek a licensed healthcare professional.
+  <strong>In an emergency, go to your nearest emergency room or dial 911
+  immediately.</strong>
+</div>
+
+<div class="card" id="resultCard" hidden>
+  <h2>Result</h2>
+  <p id="verdict"></p>
+  <p id="summary"></p>
+  <pre id="raw"></pre>
+</div>
+
+<p class="sub">WoundDelta is measurement and trending software for clinician
+review. It does not diagnose and it does not recommend treatment. See
+SECURITY.md in the repo for the honest limits.</p>
+
+<script>
+const $ = id => document.getElementById(id);
+let caseId = null;
+
+function showImg(input, img) {
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (f) img.src = URL.createObjectURL(f);
+  });
+}
+showImg($('prevFile'), $('ghostImg'));
+showImg($('newFile'), $('newImg'));
+$('ghostRange').addEventListener('input', e => $('ghostImg').style.opacity = e.target.value / 100);
+
+async function ensureCase() {
+  if (caseId) return caseId;
+  const r = await fetch('/api/cases', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({label: 'demo case'})});
+  caseId = (await r.json()).id;
+  return caseId;
+}
+
+async function upload(file, takenOn) {
+  const id = await ensureCase();
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('taken_on', takenOn);
+  const r = await fetch(`/api/cases/${id}/captures`, {method: 'POST', body: fd});
+  if (!r.ok) throw new Error(await r.text());
+}
+
+function render(data) {
+  $('resultCard').hidden = false;
+  const m = data.measurements;
+  if (!m) { $('verdict').textContent = 'No change: identical photo.'; }
+  else if (m.escalate) { $('verdict').innerHTML = '<span class="flag">Red-flag patterns detected. Raise this with the care team.</span>'; }
+  else { $('verdict').innerHTML = '<span class="ok">No red-flag patterns on this pair.</span>'; }
+  $('summary').textContent = data.summary || '';
+  $('raw').textContent = JSON.stringify(data, null, 2);
+}
+
+$('compareBtn').addEventListener('click', async () => {
+  const prev = $('prevFile').files[0], next = $('newFile').files[0];
+  if (!prev || !next) { alert('Choose both photos first.'); return; }
+  try {
+    caseId = null;
+    await upload(prev, '2026-10-16');
+    await upload(next, '2026-10-23');
+    const r = await fetch(`/api/cases/${caseId}/compare`, {method: 'POST',
+      headers: {'X-Tier': $('tierSel').value}});
+    render(await r.json());
+  } catch (e) { alert(e.message); }
+});
+
+document.querySelectorAll('[data-demo]').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const r = await fetch(`/api/demo/compare?kind=${btn.dataset.demo}`, {method: 'POST',
+      headers: {'X-Tier': $('tierSel').value}});
+    render(await r.json());
+  });
+});
+</script>
+</body>
+</html>
