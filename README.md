@@ -9,6 +9,8 @@
 > For any medical issue or concern, seek a licensed healthcare professional.
 > **In an emergency, go to your nearest emergency room or dial 911 immediately.**
 
+▶ **Try the live demo:** https://rtmalikian.github.io/wound-delta/ — static preview with demo data, no backend connected.
+
 ---
 
 # WoundDelta
